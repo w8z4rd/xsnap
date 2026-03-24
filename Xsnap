@@ -1,0 +1,76 @@
+#!/bin/bash
+# Name: Xsnap
+
+# Check dependencies only when running actions, not during 'install' setup
+check_deps() {
+    command -v scrot >/dev/null 2>&1 || { echo >&2 "Error: scrot is required."; exit 1; }
+    command -v jq >/dev/null 2>&1 || { echo >&2 "Error: jq is required."; exit 1; }
+    command -v xclip >/dev/null 2>&1 || { echo >&2 "Error: xclip is required."; exit 1; }
+}
+
+TMP_FILE="/tmp/Xsnap_$(date +%s).png"
+
+capture() {
+    # Sleep 0.2 is handled by the keybind, but a safety sleep here doesn't hurt
+    scrot -s -o "$TMP_FILE"
+}
+
+case "$1" in
+    copy)
+        check_deps
+        capture
+        if [ -f "$TMP_FILE" ]; then
+            xclip -selection clipboard -t image/png -i "$TMP_FILE"
+            notify-send "Xsnap" "Copied to clipboard"
+            rm "$TMP_FILE"
+        fi
+        ;;
+
+    lens)
+        check_deps
+        capture
+        if [ -f "$TMP_FILE" ]; then
+            notify-send "Xsnap" "Uploading to Google Lens..."
+            RESPONSE=$(curl -s -F "files[]=@$TMP_FILE" "https://uguu.se/upload.php?output=json")
+            IMG_URL=$(echo "$RESPONSE" | jq -r '.files[0].url')
+
+            if [ "$IMG_URL" != "null" ] && [ -n "$IMG_URL" ]; then
+                xdg-open "https://lens.google.com/uploadbyurl?url=${IMG_URL}"
+            else
+                notify-send "Xsnap Error" "Upload failed."
+            fi
+            rm "$TMP_FILE"
+        fi
+        ;;
+
+    install)
+        # Verify SXHKD config exists
+        SXHKD_CONF="$HOME/.config/sxhkd/sxhkdrc"
+        
+        # Create dir if not exists
+        mkdir -p "$(dirname "$SXHKD_CONF")"
+        touch "$SXHKD_CONF"
+
+        if grep -q "Xsnap" "$SXHKD_CONF"; then
+            echo "It looks like Xsnap is already configured in $SXHKD_CONF"
+        else
+            echo "Appending keybinds to $SXHKD_CONF..."
+            # We use 'Xsnap' directly assuming it's in /usr/bin/ now
+            cat <<EOT >> "$SXHKD_CONF"
+
+# Xsnap keybinds
+super + shift + s
+    sleep 0.2; xsnap copy
+
+super + shift + a
+    sleep 0.2; xsnap lens
+EOT
+            echo "Done! Please reload sxhkd (usually Super + Esc)."
+        fi
+        ;;
+
+    *)
+        echo "Usage: xsnap {copy|lens|install}"
+        exit 1
+        ;;
+esac
